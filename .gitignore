@@ -1,0 +1,4 @@
+*.pyc
+django_ldapdb.egg-info
+*.swp
+*.swo
