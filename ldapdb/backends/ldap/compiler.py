@@ -124,6 +124,12 @@ class SQLCompiler(object):
         return output
 
     def results_iter(self):
+        ## This implementation does not use the server side sorting
+        ## extension. It is assumed that most setups will use openldap,
+        ## which does not provide sss at this point.
+        ## TODO: link to openldap forums/discussions pointing the problem,
+        ##       raise request?
+        ##       By the way, does python-ldap support sss?
         if self.query.select_fields:
             fields = self.query.select_fields
         else:
@@ -141,62 +147,65 @@ class SQLCompiler(object):
         except ldap.NO_SUCH_OBJECT:
             return
 
-        # perform sorting
-        if self.query.extra_order_by:
-            ordering = self.query.extra_order_by
-        elif not self.query.default_ordering:
-            ordering = self.query.order_by
-        else:
-            ordering = self.query.order_by or self.query.model._meta.ordering
-        def cmpvals(x, y):
-            for fieldname in ordering:
-                if fieldname.startswith('-'):
-                    fieldname = fieldname[1:]
-                    negate = True
-                else:
-                    negate = False
-                if fieldname == 'pk':
-                    fieldname = self.query.model._meta.pk.name
-                field = self.query.model._meta.get_field(fieldname)
-                attr_x = field.from_ldap(x[1].get(field.db_column, []), connection=self.connection)
-                attr_y = field.from_ldap(y[1].get(field.db_column, []), connection=self.connection)
-                # perform case insensitive comparison
-                if hasattr(attr_x, 'lower'):
-                    attr_x = attr_x.lower()
-                if hasattr(attr_y, 'lower'):
-                    attr_y = attr_y.lower()
-                val = negate and cmp(attr_y, attr_x) or cmp(attr_x, attr_y)
-                if val:
-                    return val
-            return 0
-        vals = sorted(vals, cmp=cmpvals)
-
-        # process results
-        pos = 0
-        results=[]
+        ## Pre-process results: vals_pp is a list of rows (list)
+        vals_pp = []
         for dn, attrs in vals:
-            # FIXME : This is not optimal, we retrieve more results than we need
-            # but there is probably no other options as we can't perform ordering
-            # server side.
-            if (self.query.low_mark and pos < self.query.low_mark) or \
-               (self.query.high_mark is not None and pos >= self.query.high_mark):
-                pos += 1
-                continue
             row = []
-            for field in iter(fields):
+            for field in fields:
                 if field.attname == 'dn':
                     row.append(dn)
                 elif hasattr(field, 'from_ldap'):
                     row.append(field.from_ldap(attrs.get(field.db_column, []), connection=self.connection))
                 else:
                     row.append(None)
-            if self.query.distinct:
-                if row in results:
-                    continue
+            vals_pp.append(row)
+
+        # perform sorting, if required
+        if self.query.extra_order_by:
+            ordering = self.query.extra_order_by
+        elif not self.query.default_ordering:
+            ordering = self.query.order_by
+        else:
+            ordering = self.query.order_by or self.query.model._meta.ordering
+
+        if ordering:
+            ## Prepare the ordering
+            ordering_prepd = []
+            for fieldname in ordering:
+                if fieldname.startswith('-'):
+                    fieldname = fieldname[1:]
+                    reverse = True
                 else:
-                    results.append(row)
-            yield row
-            pos += 1
+                    reverse = False
+                if fieldname == 'pk':
+                    fieldname = self.query.model._meta.pk.name
+
+                field = self.query.model._meta.get_field(fieldname)
+                ordering_prepd.append(field)
+
+            def cmpvals(x, y):
+                """
+                Compare function for sorting, for more than 1 sort fields
+                """
+                for field in ordering_prepd:
+                    field_index = fields.index(field)
+                    attr_x = x[field_index]
+                    attr_y = y[field_index]
+                    # perform case insensitive comparison
+                    if hasattr(attr_x, 'lower'):
+                        attr_x = attr_x.lower()
+                        ## Attributes are of the same type for all values,
+                        ## no need to check if attr_y has lower() too
+                        attr_y = attr_y.lower()
+                    val = reverse and cmp(attr_y, attr_x) or cmp(attr_x, attr_y)
+                    if val:
+                        return val
+                return 0
+
+            vals_pp.sort(cmp=cmpvals)
+
+        return iter(vals_pp[self.query.low_mark:self.query.high_mark])
+
 
 class SQLInsertCompiler(compiler.SQLInsertCompiler, SQLCompiler):
     pass
