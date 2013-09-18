@@ -32,25 +32,75 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-import ldap
 import logging
 
-import django.db.models
-from django.db import connections, router
+from django.db import models, connections, router
 from django.db.models import signals
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 
+import ldap
 import ldapdb
 
-class Model(django.db.models.base.Model):
+class QuerySet(models.query.QuerySet):
+
+    def using(self, alias):
+        """
+        Selects which database this QuerySet should execute it's query against,
+        but change model base_dn to avoid errors.
+        """
+        clone = self._clone()
+        clone._db = alias
+        return clone
+
+class ModelManager(models.manager.Manager):
+
+    def get_query_set(self):
+        # force using to choose right server
+        return QuerySet(self.model, using=self._db).using(self._db)
+
+    def using(self,alias):
+        return self.get_query_set().using(alias)
+
+
+class Model(models.base.Model):
     """
     Base class for all LDAP models.
     """
-    dn = django.db.models.fields.CharField(max_length=200)
+    dn = models.fields.CharField(max_length=200)
 
     # meta-data
     base_dn = None
     search_scope = ldap.SCOPE_SUBTREE
     object_classes = ['top']
+    objects = ModelManager()
+
+    @classmethod
+    def get_base_dn(self,alias):
+        try:
+            conn_dict = settings.DATABASES[alias]
+        except KeyError:
+            raise ImproperlyConfigured,u"Connection settings for '%s' not found. Please, setup a connection in DATABASES configuration at settings.py" % alias
+        else:
+            try:
+                return conn_dict['BASE_DN']
+            except KeyError:
+                raise ImproperlyConfigured, u"Connections settings for '%(conn)s' found, but BASE_DN for '%(conn)s' not found in settings. Please configure a BASE_DN for connection '%(conn)s'." % {'conn': alias}
+
+    @property
+    def base_dn(self):
+        # backwards compatibility
+        try:
+            return self.__class__.get_base_dn(self._state.db)
+        except Exception:
+            raise ValueError, u"Unknow connection. Need a instance to know the connection."
+
+    @property
+    def using(self):
+        try:
+            return self._state.db
+        except Exception:
+            raise ValueError, u"Unknow connection. Need a instance to know the connection."
 
     def __init__(self, *args, **kwargs):
         super(Model, self).__init__(*args, **kwargs)
@@ -93,6 +143,8 @@ class Model(django.db.models.base.Model):
         connection = connections[using]
         if not self.dn:
             # create a new entry
+            # Store the database on which the object was saved
+            self._state.db = using
             record_exists = False 
             entry = [('objectClass', self.object_classes)]
             new_dn = self.build_dn()
@@ -114,7 +166,11 @@ class Model(django.db.models.base.Model):
             # update an existing entry
             record_exists = True
             modlist = []
-            orig = self.__class__.objects.get(pk=self.saved_pk)
+            # force use of alias in 'self.using' if any alias are sent in args.
+            try:
+                orig = self.__class__.objects.using(using or self._state.db ).get(pk=self.saved_pk)
+            except Exception:
+                raise ValueError, u"Unknow connection. Need a instance to know the connection."
             for field in self._meta.fields:
                 if not field.db_column:
                     continue
@@ -142,6 +198,21 @@ class Model(django.db.models.base.Model):
         # done
         self.saved_pk = self.pk
         signals.post_save.send(sender=self.__class__, instance=self, created=(not record_exists))
+
+    #@classmethod
+    #def scoped(base_class, base_dn):
+    #    """
+    #    Returns a copy of the current class with a different base_dn.
+    #    """
+    #    import new
+    #    import re
+    #    suffix = re.sub('[=,]', '_', base_dn)
+    #    name = "%s_%s" % (base_class.__name__, str(suffix))
+    #    new_class = new.classobj(name, (base_class,), {'base_dn': base_dn, '__module__': base_class.__module__})
+    #    return new_class
+    #
+    # This commented version are from previous versions but works, don't know
+    # if new version can work
 
     @classmethod
     def scoped(base_class, base_dn):

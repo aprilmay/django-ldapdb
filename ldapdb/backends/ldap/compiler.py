@@ -102,7 +102,7 @@ class SQLCompiler(object):
 
         try:
             vals = self.connection.search_s(
-                self.query.model.base_dn,
+                self.query.model.get_base_dn(self.using),
                 self.query.model.search_scope,
                 filterstr=query_as_ldap(self.query),
                 attrlist=['dn'],
@@ -139,7 +139,7 @@ class SQLCompiler(object):
 
         try:
             vals = self.connection.search_s(
-                self.query.model.base_dn,
+                self.query.model.get_base_dn(self.using),
                 self.query.model.search_scope,
                 filterstr=query_as_ldap(self.query),
                 attrlist=attrlist,
@@ -214,7 +214,7 @@ class SQLDeleteCompiler(compiler.SQLDeleteCompiler, SQLCompiler):
     def execute_sql(self, result_type=compiler.MULTI):
         try:
             vals = self.connection.search_s(
-                self.query.model.base_dn,
+                self.query.model.get_base_dn(self.using),
                 self.query.model.search_scope,
                 filterstr=query_as_ldap(self.query),
                 attrlist=['dn'],
