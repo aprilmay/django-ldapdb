@@ -76,7 +76,7 @@ class Model(models.base.Model):
     objects = ModelManager()
 
     @classmethod
-    def get_base_dn(self,alias):
+    def get_base_dn(cls, alias):
         try:
             conn_dict = settings.DATABASES[alias]
         except KeyError:

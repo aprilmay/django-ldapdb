@@ -1,25 +1,25 @@
 # -*- coding: utf-8 -*-
-# 
+#
 # django-ldapdb
 # Copyright (c) 2009-2010, Bolloré telecom
 # All rights reserved.
-# 
+#
 # See AUTHORS file for a full list of contributors.
-# 
+#
 # Redistribution and use in source and binary forms, with or without modification,
 # are permitted provided that the following conditions are met:
-# 
-#     1. Redistributions of source code must retain the above copyright notice, 
+#
+#     1. Redistributions of source code must retain the above copyright notice,
 #        this list of conditions and the following disclaimer.
-#     
-#     2. Redistributions in binary form must reproduce the above copyright 
+#
+#     2. Redistributions in binary form must reproduce the above copyright
 #        notice, this list of conditions and the following disclaimer in the
 #        documentation and/or other materials provided with the distribution.
-# 
+#
 #     3. Neither the name of Bolloré telecom nor the names of its contributors
 #        may be used to endorse or promote products derived from this software
 #        without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 # WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -130,8 +130,10 @@ class SQLCompiler(object):
         ## TODO: link to openldap forums/discussions pointing the problem,
         ##       raise request?
         ##       By the way, does python-ldap support sss?
-        if self.query.select_fields:
-            fields = self.query.select_fields
+        if self.query.select:
+            ## XXX: Need to run tests here: with Django 1.6, query.select_fields is removed,
+            ##      using select instead (might need to do: [f.field for f in self.query.select])
+            fields = self.query.select
         else:
             fields = self.query.model._meta.fields
 
@@ -222,7 +224,7 @@ class SQLDeleteCompiler(compiler.SQLDeleteCompiler, SQLCompiler):
         except ldap.NO_SUCH_OBJECT:
             return
 
-        # FIXME : there is probably a more efficient way to do this 
+        # FIXME : there is probably a more efficient way to do this
         for dn, attrs in vals:
             self.connection.delete_s(dn)
 
